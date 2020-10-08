@@ -1,0 +1,11 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="roidControl">
+    <output-path>$USER_HOME$/Desktop/Starmade/server testarea/dedicated starmade/StarMade/mods</output-path>
+    <root id="archive" name="roidControl.jar">
+      <element id="module-output" name="RoidControl" />
+      <element id="directory" name="META-INF">
+        <element id="file-copy" path="$PROJECT_DIR$/META-INF/MANIFEST.MF" />
+      </element>
+    </root>
+  </artifact>
+</component>
