@@ -13,15 +13,18 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import org.newdawn.slick.Game;
 import org.schema.common.util.linAlg.Vector3i;
+import org.schema.game.common.controller.SegmentController;
 import org.schema.game.common.data.fleet.Fleet;
 import org.schema.game.common.data.fleet.FleetMember;
 import org.schema.game.common.data.player.PlayerState;
 import org.schema.game.common.data.player.faction.Faction;
+import org.schema.game.common.data.player.faction.FactionNewsPost;
 import org.schema.game.common.data.player.faction.FactionPermission;
 import org.schema.game.common.data.player.faction.FactionRelation;
 import org.schema.game.common.data.world.Sector;
 import org.schema.game.common.data.world.SimpleTransformableSendableObject;
 import org.schema.game.server.data.GameServerState;
+import org.schema.schine.common.language.Lng;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,30 +55,48 @@ public class FleetEventHandler {
         StarLoader.registerListener(SegmentControllerOverheatEvent.class, new Listener<SegmentControllerOverheatEvent>() {
             @Override
             public void onEvent(SegmentControllerOverheatEvent e) {
-                Fleet f = e.getEntity().getFleet();
-                if (f == null) {
-                    ModPlayground.broadcastMessage("fleet is null");
-                    return;
-                }
-                if(f.isNPCFleet()) {
-                    ModPlayground.broadcastMessage("npc fleet");
-                    return;
-                }
-                ModPlayground.broadcastMessage("fleet of destroyed ship: " + f.getName());
-                int factionID = 0;
-                for (FleetMember fm: f.getMembers()) {
+                try {
+                    Fleet f = e.getEntity().getFleet();
+                    if (f == null) {
+                        ModPlayground.broadcastMessage("fleet is null");
+                        return;
+                    }
+                    if(f.isNPCFleet()) {
+                        ModPlayground.broadcastMessage("npc fleet");
+                        return;
+                    }
+                    ModPlayground.broadcastMessage("fleet of destroyed ship: " + f.getName());
+                    int factionID = 0;
+                    DebugFile.log("fleet is: " + f.getName());
+                    DebugFile.log("fleet has " + f.getMembers().size() + " members ");
+                    for (FleetMember fm: f.getMembers()) {
+                        int memberFID = fm.getFactionId();
+                        DebugFile.log("member is " + fm.name + " with faction ID " + memberFID);
+                        if (memberFID != 0) {
+                            Faction faction = GameServer.getServerState().getFactionManager().getFaction(fm.getFactionId());
 
-                    Faction faction = GameServer.getServerState().getFactionManager().getFaction(fm.getFactionId());
-                    if (faction != null) {
-                        factionID = fm.getFactionId();
-                        break;
-                    };
+                            if (faction != null) {
+                                DebugFile.log(faction.getName());
+                                factionID = fm.getFactionId();
+                                break;
+                            };
+                        }
+
+
+                    }
+                    if (factionID == 0) {
+                        ModPlayground.broadcastMessage("could not find valid faction for any member");
+                        return;
+                    }
+                    DebugFile.log("sending faction message");
+                    FleetEventHandler.SendFactionNews(factionID,"[Fleet]","fleet lost ship",e.getEntity().getName() +" of our fleet" + f.getName() + " was lost to " + e.getLastDamager().getName() + " at sector " + e.getEntity().getSector(new Vector3i()).toString(),0);
+                    //FleetEventHandler.SendFactionMembers(factionID,"[Fleet]" + f.getName(),"OWN SHIP DESTROYED","the fleet has lost the ship " + e.getEntity().getName() + " at " + e.getEntity().getSector(new Vector3i()).toString() + " to attacker " + e.getLastDamager().getShootingEntity().getName() + " of " + e.getLastDamager().getShootingEntity().getFaction().getName());
+
+                } catch (Exception exception) {
+                    DebugFile.log(exception.toString());
+                    exception.printStackTrace();
+                    ModPlayground.broadcastMessage(exception.toString());
                 }
-                if (factionID == 0) {
-                    ModPlayground.broadcastMessage("could not find valid faction for any member");
-                    return;
-                }
-                FleetEventHandler.SendFactionMembers(factionID,"[Fleet]" + f.getName(),"OWN SHIP DESTROYED","the fleet has lost the ship " + e.getEntity().getName() + " at " + e.getEntity().getSector(new Vector3i()).toString() + " to attacker " + e.getLastDamager().getShootingEntity().getName() + " of " + e.getLastDamager().getShootingEntity().getFaction().getName());
             }
         });
     }
@@ -91,7 +112,9 @@ public class FleetEventHandler {
                 //get all members
                 List<Faction> factionsPresent = new ArrayList<Faction>();
                 String enemiesNearby = "";
-
+                DebugFile.log("break 1");
+                SegmentController sc = e.getMemberSC();
+                DebugFile.log("segmentcontroller: " + sc.getName());
                 Vector3i sector = e.getMemberSC().getSector(new Vector3i());
                 DebugFile.log("sector is " + sector.toString());
                 //get enemy ships in sector
@@ -119,6 +142,8 @@ public class FleetEventHandler {
                 //! get enemy factions in sector
                 //send message to all faction members
                 SendFactionMembers(factionID, "[Fleet] " + e.getFleet().getName(),"ATTACK","fleet is under attack at: " + sector.toString()+ ", enemies nearby: " + enemiesNearby);
+                SendFactionNews(factionID,"[Fleet] " + e.getFleet().getName(),"ATTACK","fleet is under attack at: " + sector.toString()+ ", enemies nearby: " + enemiesNearby,0);
+                ModPlayground.broadcastMessage("faction news and pms sent about fleet attack");
                 DebugFile.log("sent fleetattacked f4-mail to faction " + GameServer.getServerState().getFactionManager().getFaction(factionID).getName());
             }
         });
@@ -191,5 +216,27 @@ public class FleetEventHandler {
             e.printStackTrace();
             DebugFile.log(e.toString());
         }
+    }
+
+    /**
+     * send a news message to the faction board
+     * @param factionID receiving faction
+     * @param sender source of message (can be anything)
+     * @param topic topic title displayed
+     * @param message message displayed
+     * @param permission access modifier for faction rank
+     */
+    public static void SendFactionNews(int factionID, String sender, String topic, String message, int permission) {
+        FactionNewsPost o = new FactionNewsPost();
+        o.set(factionID, Lng.str(sender), System.currentTimeMillis(), Lng.str(topic), message, permission);
+       GameServerState.instance.getFactionManager().addNewsPostServer(o);
+    }
+
+    /**
+     * display a hint in each faction members GUI
+     * @param faction
+     */
+    public static void BroadcastFactionHint(Faction faction) {
+       // faction.broadcastMessage();
     }
 }
